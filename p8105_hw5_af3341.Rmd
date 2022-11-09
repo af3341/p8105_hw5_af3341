@@ -1,0 +1,84 @@
+---
+title: "p8105_hw5_af3341"
+author: "Alana Ferris"
+date: "2022-11-09"
+output: github_document
+---
+
+```{r setup, include=FALSE, message = FALSE, warning = FALSE}
+library(tidyverse)
+
+library(rvest)
+
+set.seed(1)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+# Problem 1 
+
+## Creating a Dataframe
+
+```{r}
+long_study_df = list.files(path = "./data")
+
+study_df = tibble(files = long_study_df)
+
+read_files = 
+  function(filename) {
+  participant_data = 
+  read_csv(file = paste0("./data/", filename)) %>%
+  mutate(study_arm = filename)
+}
+
+study_data =
+  map_df(study_df, read_files)
+```
+
+## Tidying the Dataframe
+
+```{r}
+tidy_df = 
+  study_data %>% 
+  pivot_longer(
+    week_1:week_8,
+    names_to = "week",
+    values_to = "value",
+    names_prefix = "week_"
+  ) %>% 
+  separate(study_arm, into = c("study_arm", "subject_id"), sep = "_", convert = TRUE) %>% 
+  mutate(
+    subject_id = str_replace(subject_id, ".csv", "")) %>%
+  group_by(study_arm, subject_id) %>% 
+  mutate(
+    unique_id = paste0(study_arm, subject_id)
+  ) %>% 
+  select(study_arm, subject_id, unique_id, week, value)
+
+```
+
+## Spaghetti Plot 
+
+```{r}
+tidy_df %>% 
+  ggplot(aes(x = week, y = value, group = unique_id, color = study_arm)) + 
+  geom_line() +
+  labs(
+    x = "Week of Observation",
+    y = "Value",
+    title = "Spaghetti Plot of Observations on Each Subject Over Time")
+```
+As shown in the plot above, the experimental arm of the 8-week longitudinal study has higher recorded values than the control arm of the study.  
