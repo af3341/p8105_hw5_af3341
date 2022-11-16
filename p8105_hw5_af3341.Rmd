@@ -81,6 +81,7 @@ tidy_df %>%
     y = "Value",
     title = "Spaghetti Plot of Observations on Each Subject Over Time")
 ```
+
 As shown in the plot above, the experimental arm of the 8-week longitudinal study has higher recorded values than the control arm of the study.
 
 # Problem 2
@@ -96,99 +97,85 @@ The `homicides` dataset contains `r nrow(homicides)` observations of individual 
 ## Data manipulations
 
 ```{r, warning = FALSE, message = FALSE}
-homicides_status =
-  homicides %>% 
-  mutate(city = str_replace(city, "$", ", ")) %>%
-  mutate(city_state = paste0(city, state)) %>% 
-  group_by(city_state) 
-
-tot_homicides = 
-  homicides_status %>% 
+total_homicide = homicides %>% 
+ mutate(city = str_replace(city, "$", ", ")) %>% 
+  mutate(city_state = 
+    paste0(city, state)) %>% 
+  group_by(city_state) %>% 
+  mutate(unsolved = 
+           case_when(disposition == 'Closed without arrest' | 
+                    disposition == 'Open/No arrest' ~ TRUE, 
+                    disposition == 'Closed by arrest'~ FALSE)) %>% 
   summarize(
-    total_homicides = n()
-  )
-
-unsolved_homicides =
-  homicides_status %>% 
-  filter(disposition == "Closed without arrest" | disposition  == "Open/No arrest") %>% 
-  summarize(
-    total_unsolved = n()
-  )
+    total_homicide = n()) 
+  
+unsolved_homicide = homicides %>% 
+ mutate(city = str_replace(city, "$", ", ")) %>% 
+  mutate(city_state = 
+    paste0(city, state)) %>% 
+  group_by(city_state) %>% 
+    filter(disposition == 'Closed without arrest' | disposition == 'Open/No arrest') %>% 
+     summarize(
+    unsolved = n())
 ```
 
-### `prop.test` for Baltimore
+## `prop.test` for Baltimore
 
 ```{r, warning = FALSE, message = FALSE}
-summary = left_join(tot_homicides, unsolved_homicides, by = "city_state") %>% 
+summary = left_join(total_homicide, unsolved_homicide, by = "city_state") %>% 
  drop_na()
  
 balt_test = summary %>% 
   filter(city_state == "Baltimore, MD") 
   
 bmore_output = 
-  prop.test(balt_test %>% pull(total_unsolved), balt_test %>% pull(total_homicides)) %>% 
+  prop.test(balt_test %>% pull(unsolved), balt_test %>% pull(total_homicide)) %>% 
   broom::tidy() %>% 
   select(estimate, starts_with("conf"))
 ```
 
-### `prop.test` function
+## `prop.test` function
 
 ```{r, warning = FALSE, message = FALSE}
- tot_homicides = 
-  homicides_status %>% 
-  summarize(
-    total_homicides = n()
-  )
-  
-  unsolved_homicides =
-  homicides_status %>% 
-  filter(disposition == "Closed without arrest" | disposition  == "Open/No arrest") %>% 
-  summarize(
-    total_unsolved = n()
-  )
-
-summary = 
-  left_join(tot_homicides, unsolved_homicides, by = "city_state") %>% 
-  drop_na()
-    
 prop_test = 
   function(summary) {
     output =  
-      prop.test(summary %>% pull(total_unsolved), summary %>% pull(total_homicides)) %>% 
-      broom::tidy() 
+      prop.test(summary %>% pull(unsolved), summary %>% pull(total_homicide)) %>% 
+      broom::tidy() %>% 
+      select(estimate, starts_with("conf"))
   }
-
-output =   
-    prop.test(x, y) %>%
-    broom::tidy() %>% 
-    select(estimate, starts_with("conf"))
-
-
-balt_test = 
-  summary %>% 
-  filter(city_state == "Baltimore, MD")
-
-balt_test =
-  prop_test(total_unsolved, total_homicides) %>% 
-  broom::tidy() %>% 
-  select(estimate, starts_with("conf"))
-
-## create baltimore dataframe again and run function on baltimore by itself and see what happens 
 ```
-attempt with for loop
-```{r, warning = FALSE, message = FALSE}
+## Mapping function across all cities
 
-list = as.list(summary)
+```{r}
+summary_nested = 
+  summary %>% 
+  nest(data = unsolved:total_homicide)
 
-output = vector("list", length = 50)
+summary_unnested = 
+  summary_nested %>% 
+  mutate(
+    prop_cities = map(data, prop_test)) %>% 
+  unnest(prop_cities)
 
-for (i in 1:50) {
-  output[[i]] = prop_test(list[[i]])
-}
+```
 
-output
+## Plot of proportion estimates and confidence intervals for all cities
 
-prop_test(x = )
+```{r}
+summary_unnested %>% 
+  mutate(
+    ci = conf.high - conf.low,  
+    city_state = fct_reorder(city_state, estimate)
+  ) %>% 
+  ggplot(aes(x = city_state, y = estimate)) + 
+  geom_point() + 
+  geom_errorbar(aes(x = city_state, ymin = estimate - ci, ymax = estimate + ci)) + 
+  theme(axis.text.x = element_text(angle = 65, hjust = 1, size = 6)) +
+   labs(
+    title = "Estimated Proportion of Unsolved Homicides for 50 Major U.S. Cities",
+    x = "U.S. City",
+    y = "Proportion")
 ```
 
 # Problem 3
@@ -214,7 +201,7 @@ sim_results_df =
   sample_size = 30,
   true_sigma = 5,
   true_mu = 0,
-  iteration = 1:100
+  iteration = 1:5000
 ) %>% 
   mutate(
     estimate_df = map(sample_size, sim_t_test)
@@ -228,7 +215,7 @@ sim_results_df =
 sim_mu_results = 
   tibble(
     mu = (0:6),
-    simulations = map(.x = mu, ~rerun(100, sim_t_test(mu = .x)))
+    simulations = map(.x = mu, ~rerun(5000, sim_t_test(mu = .x)))
   ) %>% 
   unnest(c(simulations)) %>% 
   unnest(c(simulations))
@@ -250,9 +237,10 @@ sim_mu_results %>%
   )
 ```
 
-Here we can see that power increases as the effect size increases; it approaches 1 as the effect size increases. The power is the probability of rejecting the null hypothesis given the null hypothesis is false. The effect size is calculated by taking the difference of mu hat from the true mu and dividing by the standard deviation. Thus, it makes sense that the bigger the true mu the larger the effect size and we see the correlation with a larger power as well.
+Here we can see that power increases as the effect size increases; it approaches 1 as the true mu increases. 
+The power is the probability of rejecting the null hypothesis given the null hypothesis is false. It depends on the sample size, the effect size, and the significance level of the test. The effect size is calculated by taking the difference of mu hat from the true mu and dividing by the standard deviation. So, it makes sense why we are seeing a positive correlation between power and effect size because as the true mu increases and the standard deviation stays the same, the effect size will be larger and thus so will power.
 
-# Plot of average estimate of μ̂ versus true value of mu
+## Plot of average estimate of μ̂ versus true value of mu
 
 ```{r, warning = FALSE, message = FALSE}
 sim_mu_results %>% 
@@ -267,7 +255,7 @@ sim_mu_results %>%
   )
 ```
 
-# Plot of average estimate of μ̂ only in samples for which the null was rejected versus the true value of μ
+## Plot of average estimate of μ̂ only in samples for which the null was rejected versus the true value of μ
 
 ```{r, warning = FALSE, message = FALSE}
 sim_mu_results %>% 
@@ -278,13 +266,11 @@ sim_mu_results %>%
   ggplot(aes(x = mu, y = average_estimate)) +
   geom_point() +
   labs(
-    title = "Average estimated mu among tests for which null is rejected, by true mu",
+    title = "Average estimated mu for rejected null tests, by true mu",
     x = "True mu",
-    y = "Average estimated mu among tests for which null is rejected"
+    y = "Average estimated mu for rejected null test"
   )
 ```
-
-# Is the sample average of μ̂ across tests for which the null is rejected approximately equal to the true value of μ? Why or why not?
 
 We can see that for true mu 4, 5, and 6, the mu hat was a good estimate. However, for true mu of 0, the mu hat underestimated the true mu. For true mu of 1, 2, and 3, the mu hat overestimated the true mu. This indicates that the sample average of mu hat for tests where the null is rejected is generally not a good approximation of the true mu. 
 This poor estimation of the true mu makes sense since we are only looking at tests where the p value is significant (a `t.test` where we conclude to reject the null). Scenarios where we reject the null would be when the estimated mu is significantly different  from the true mu (the null).
